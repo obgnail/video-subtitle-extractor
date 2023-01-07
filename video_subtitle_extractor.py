@@ -228,7 +228,7 @@ class Video:
 
     def get_frames_by_frame_range(self, frame_start: int, frame_end: int, frame_step: int) -> Iterable:
         """输入帧索引范围, 获取每一帧对应的画面"""
-        frame_end = self.frame_count if not frame_end else frame_end
+        frame_end = self.frame_count if not frame_end else frame_end + 1
         return self.get_frames(range(frame_start, frame_end, frame_step))
 
     def show_by_time_range(self,
@@ -256,7 +256,7 @@ class Video:
         frame_start = frame_start if frame_start != -1 else 0
         frame_end = frame_end if frame_end != -1 else self.frame_count - 1
         return self.show(
-            frame_iterator=range(frame_start, frame_end + 1, frame_interval),
+            frame_iterator=self.get_frames_by_frame_range(frame_start, frame_end, frame_interval),
             frame_handler=frame_handler,
             wait=wait
         )
@@ -275,7 +275,8 @@ class Video:
                 cv2.imwrite(str(idx), frame)
         cv2.destroyAllWindows()
 
-    def select_roi(self, frame_time: str = '-', resize: float = 0.5, reshow: bool = False) -> Tuple[int]:
+    def select_roi(self, frame_time: str = '-', resize: float = 0.5,
+                   reshow: bool = False, reshow_wait: int = 24) -> Tuple[int]:
         """
         以交互的方式剪切某一时刻的画面
         :param frame_time: 时间
@@ -297,12 +298,17 @@ class Video:
 
         r = tuple(int(i // resize) for i in roi)
         if reshow:
+            def frame_handler(frame, video: Video):
+                frame = FrameHandler.roi(frame, video, r)
+                frame = FrameHandler.resize(frame, video, resize)
+                return frame
+
             self.show_by_frame_range(
-                frame_handler=lambda frame, video: frame[int(r[1]):int(r[1] + r[3]), int(r[0]):int(r[0] + r[2])],
+                frame_handler=frame_handler,
                 frame_start=frame_index,
                 frame_end=self.frame_count - 1,
                 frame_interval=1,
-                wait=24
+                wait=reshow_wait
             )
         return r
 
@@ -328,6 +334,23 @@ class Video:
         subtitle_list = [getattr(formatter, suffix) for formatter in formatters]
         content = '\n'.join(subtitle_list)
         self.save_subtitle(content, file_type)
+
+
+class FrameHandler:
+    @classmethod
+    def resize(cls, frame, video: Video, resize: float = 0.5):
+        if resize != 1:
+            x, y = frame.shape[0:2]
+            frame = cv2.resize(frame, (int(y * resize), int(x * resize)))
+        return frame
+
+    @classmethod
+    def gray(cls, frame, video: Video):
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    @classmethod
+    def roi(cls, frame, video: Video, r: Tuple):
+        return frame[int(r[1]):int(r[1] + r[3]), int(r[0]):int(r[0] + r[2])]
 
 
 class SubtitleExtractor:
@@ -383,8 +406,9 @@ class SubtitleExtractor:
             ))
         return res
 
-    def select_roi(self, time_start: str = '-', resize: float = 0.5, reshow: bool = False) -> None:
-        roi = self.video.select_roi(frame_time=time_start, resize=resize, reshow=reshow)
+    def select_roi(self, time_start: str = '-', resize: float = 0.5,
+                   reshow: bool = False, reshow_wait: int = 24) -> None:
+        roi = self.video.select_roi(frame_time=time_start, resize=resize, reshow=reshow, reshow_wait=reshow_wait)
         self.roi_array = roi
 
     def extract_by_func(self, *,
@@ -425,12 +449,11 @@ class SubtitleExtractor:
     ) -> List[List[Subtitle]]:
         def frame_handler(frame, video: Video):
             if (r := self.roi_array, r):
-                frame = frame[int(r[1]):int(r[1] + r[3]), int(r[0]):int(r[0] + r[2])]
+                frame = FrameHandler.roi(frame, video, r)
             if gray == True:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                frame = FrameHandler.gray(frame, video)
             if resize != 1:
-                x, y = frame.shape[0:2]
-                frame = cv2.resize(frame, (int(y * resize), int(x * resize)))
+                frame = FrameHandler.resize(frame, video, resize)
             return frame
 
         from paddleocr import PaddleOCR, paddleocr  # 因为PaddleOCR需要加载大量数据到内存中，延迟导入
@@ -498,6 +521,6 @@ def cmd_run() -> None:
 if __name__ == '__main__':
     path = r'd:\myshare\anime\Cyberpunk Edgerunners\[orion origin] Cyberpunk Edgerunners [01] [1080p] [H265 AAC] [CHS] [ENG＆JPN stidio].mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_roi(time_start='3:24', resize=0.5)
-    subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
-    extractor.save(subtitles, file_type='lrc')
+    extractor.select_roi(time_start='3:24', resize=0.5, reshow=True, reshow_wait=1000)
+    # subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
+    # extractor.save(subtitles, file_type='lrc')
