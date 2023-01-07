@@ -289,8 +289,7 @@ class Video:
                 cv2.imwrite(str(idx), frame)
         cv2.destroyAllWindows()
 
-    def select_roi(self, frame_time: str = '-', resize: float = 0.5,
-                   reshow: bool = False, reshow_wait: int = 24) -> Tuple[int]:
+    def select_roi(self, frame_time: str = '-', resize: float = 0.5, reshow: bool = False) -> Tuple[int]:
         """
         以交互的方式剪切某一时刻的画面
         :param frame_time: 时间
@@ -322,7 +321,7 @@ class Video:
                 frame_start=frame_index,
                 frame_end=self.frame_count - 1,
                 frame_interval=self.fps,
-                wait=reshow_wait
+                wait=int(1000 / self.fps)
             )
         return r
 
@@ -420,9 +419,8 @@ class SubtitleExtractor:
             ))
         return res
 
-    def select_roi(self, time_start: str = '-', resize: float = 0.5,
-                   reshow: bool = False, reshow_wait: int = 24) -> None:
-        roi = self.video.select_roi(frame_time=time_start, resize=resize, reshow=reshow, reshow_wait=reshow_wait)
+    def select_roi(self, time_start: str = '-', resize: float = 0.5, reshow: bool = False) -> None:
+        roi = self.video.select_roi(frame_time=time_start, resize=resize, reshow=reshow)
         self.roi_array = roi
 
     def extract_by_func(self, *,
@@ -535,6 +533,6 @@ def cmd_run() -> None:
 if __name__ == '__main__':
     path = r'd:\myshare\anime\Cyberpunk Edgerunners\[orion origin] Cyberpunk Edgerunners [01] [1080p] [H265 AAC] [CHS] [ENG＆JPN stidio].mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_roi(time_start='3:24', resize=0.5, reshow=True, reshow_wait=2)
-    # subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
-    # extractor.save(subtitles, file_type='lrc')
+    extractor.select_roi(time_start='3:24', resize=0.5, reshow=True)
+    subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
+    extractor.save(subtitles, file_type='lrc')
