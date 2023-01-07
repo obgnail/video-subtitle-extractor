@@ -39,17 +39,30 @@ def get_video_frames(video_path: str, frame_idx_iterator: Iterable = None) -> It
             idx = 0
             while True:
                 ret, frame = vc.read()
-                if ret == False or frame is None:
+                if not ret or frame is None:
                     return
                 yield idx, frame
                 idx += 1
         else:
-            for idx in frame_idx_iterator:
+            it = iter(frame_idx_iterator)
+            try:
+                idx = next(it)
+                target = idx
                 vc.set(cv2.CAP_PROP_POS_FRAMES, idx)
-                ret, frame = vc.read()
-                if ret == False or frame is None:
-                    return
-                yield idx, frame
+                while True:
+                    if idx < target:
+                        ret = vc.grab()
+                        if not ret:
+                            return
+                        idx += 1
+                    else:
+                        ret, frame = vc.retrieve()
+                        if not ret or frame is None:
+                            return
+                        yield idx, frame
+                        target = next(it)
+            except StopIteration:
+                return
 
 
 def convert_time_to_frame_idx(time_str: str, fps: int) -> int:
@@ -229,7 +242,8 @@ class Video:
     def get_frames_by_frame_range(self, frame_start: int, frame_end: int, frame_step: int) -> Iterable:
         """输入帧索引范围, 获取每一帧对应的画面"""
         frame_end = self.frame_count if not frame_end else frame_end + 1
-        return self.get_frames(range(frame_start, frame_end, frame_step))
+        frame_idx_iterator = None if frame_step == 1 else range(frame_start, frame_end, frame_step)
+        return self.get_frames(frame_idx_iterator)
 
     def show_by_time_range(self,
                            frame_handler: Callable = None,
@@ -288,7 +302,7 @@ class Video:
         with capture_video(self.path) as video:
             video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
             ret, frame = video.read()
-            if ret == False or frame is None:
+            if not ret or frame is None:
                 raise AttributeError(f'read frame error. start_time:{frame_time}')
             x, y = frame.shape[0:2]
             frame = cv2.resize(frame, (int(y * resize), int(x * resize)))
@@ -307,7 +321,7 @@ class Video:
                 frame_handler=frame_handler,
                 frame_start=frame_index,
                 frame_end=self.frame_count - 1,
-                frame_interval=1,
+                frame_interval=self.fps,
                 wait=reshow_wait
             )
         return r
@@ -448,9 +462,9 @@ class SubtitleExtractor:
             resize: float = 1,
     ) -> List[List[Subtitle]]:
         def frame_handler(frame, video: Video):
-            if (r := self.roi_array, r):
+            if r := self.roi_array:
                 frame = FrameHandler.roi(frame, video, r)
-            if gray == True:
+            if gray:
                 frame = FrameHandler.gray(frame, video)
             if resize != 1:
                 frame = FrameHandler.resize(frame, video, resize)
@@ -521,6 +535,6 @@ def cmd_run() -> None:
 if __name__ == '__main__':
     path = r'd:\myshare\anime\Cyberpunk Edgerunners\[orion origin] Cyberpunk Edgerunners [01] [1080p] [H265 AAC] [CHS] [ENG＆JPN stidio].mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_roi(time_start='3:24', resize=0.5, reshow=True, reshow_wait=1000)
+    extractor.select_roi(time_start='3:24', resize=0.5, reshow=True, reshow_wait=2)
     # subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
     # extractor.save(subtitles, file_type='lrc')
