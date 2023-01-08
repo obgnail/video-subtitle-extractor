@@ -6,7 +6,7 @@ import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import List, Tuple, Callable, Iterable, Dict
+from typing import List, Tuple, Dict, Callable, Iterable
 
 from fuzzywuzzy import fuzz
 from tqdm import tqdm
@@ -419,7 +419,7 @@ class SubtitleExtractor:
             ))
         return res
 
-    def select_roi(self, time_start: str = '-', resize: float = 0.5, reshow: bool = False) -> None:
+    def select_roi(self, time_start: str = '-', resize: float = 0.5, reshow: bool = True) -> None:
         roi = self.video.select_roi(frame_time=time_start, resize=resize, reshow=reshow)
         self.roi_array = roi
 
@@ -441,8 +441,8 @@ class SubtitleExtractor:
             if frame is not None:
                 subtitle = self.ocr(ocr_handler, frame, idx)
                 subtitles.extend(subtitle)
-        subtitles = SubtitleOption.clean(subtitles)
-        return subtitles
+        subs = SubtitleOption.clean(subtitles)
+        return subs
 
     def extract(
             self, *,
@@ -533,6 +533,6 @@ def cmd_run() -> None:
 if __name__ == '__main__':
     path = r'd:\myshare\anime\Cyberpunk Edgerunners\[orion origin] Cyberpunk Edgerunners [01] [1080p] [H265 AAC] [CHS] [ENG＆JPN stidio].mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_roi(time_start='3:24', resize=0.5, reshow=True)
+    extractor.select_roi(time_start='3:24', resize=0.5, reshow=False)
     subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
     extractor.save(subtitles, file_type='lrc')
