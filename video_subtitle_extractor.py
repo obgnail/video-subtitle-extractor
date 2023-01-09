@@ -567,7 +567,6 @@ class SubtitleExtractor:
 
 def _parse_args():
     parser = argparse.ArgumentParser()
-
     parser.add_argument('--path', type=str, help='video path')
     parser.add_argument('--subtitle_max_show_second', type=int, default=10, help='subtitle max show second')
     parser.add_argument('--text_similar_threshold', type=int, default=70, help='text similar threshold')
@@ -590,11 +589,14 @@ def _parse_args():
     parser.add_argument('--parse_gray', type=bool, default=False, help='parse gray frame')
     parser.add_argument('--parse_resize', type=float, default=1, help='parse resize frame')
 
+    parser.add_argument('--use_fragment', type=bool, default=False, help='use fragment')
+    parser.add_argument('--fragment_reshow', type=bool, default=False, help='reshow fragment selected frame')
+
+    parser.add_argument('--use_roi', type=bool, default=False, help='use roi')
     parser.add_argument('--roi_time', type=str, help='select roi time. format: %H:%M:%S"')
     parser.add_argument('--roi_reshow', type=bool, default=False, help='reshow roi selected frame')
 
-    parser.add_argument('--roi_fragment', type=bool, default=False, help='reshow fragment selected frame')
-
+    parser.add_argument('--use_threshold', type=bool, default=False, help='use threshold')
     parser.add_argument('--threshold_time', type=str, help='select threshold time. format: %H:%M:%S"')
     parser.add_argument('--threshold_reshow', type=bool, default=True, help='reshow threshold selected frame')
 
@@ -602,24 +604,31 @@ def _parse_args():
 
     if not args.path:
         raise AttributeError("arg 'path' is null")
-    if not args.roi_time:
-        raise AttributeError("arg 'roi_time' is null")
+    if not args.threshold_time:
+        args.threshold_time = args.roi_time
+    if args.fragment_reshow:
+        args.use_fragment = True
+    if args.roi_time or args.roi_reshow:
+        args.use_roi = True
+    if args.threshold_time or args.threshold_reshow:
+        args.use_threshold = True
 
     global subtitle_max_show_second
     global text_similar_threshold
     subtitle_max_show_second = args.subtitle_max_show_second
     text_similar_threshold = args.text_similar_threshold
-    args.threshold_time = args.threshold_time if args.threshold_time else args.roi_time
     return args
 
 
 def cmd_run() -> None:
     args = _parse_args()
     extractor = SubtitleExtractor(video_path=args.path)
-    if not args.parse_time_start and not args.parse_time_end:
-        extractor.select_fragment(reshow=args.roi_fragment)
-    extractor.select_roi(time_frame=args.roi_time, reshow=args.roi_reshow)
-    extractor.select_threshold(time_frame=args.threshold_time)
+    if args.use_fragment:
+        extractor.select_fragment(reshow=args.fragment_reshow)
+    if args.use_roi:
+        extractor.select_roi(time_frame=args.roi_time, reshow=args.roi_reshow)
+    if args.use_threshold:
+        extractor.select_threshold(time_frame=args.threshold_time)
     subtitles = extractor.extract(
         lang=args.ocr_lang,
         use_angle_cls=args.ocr_use_angle_cls,
@@ -643,9 +652,9 @@ def cmd_run() -> None:
 def test():
     path = r'./CyberpunkEdgerunners01.mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_fragment(reshow=True)
-    extractor.select_roi(time_frame='3:24', reshow=True)
-    extractor.select_threshold(time_frame='3:24', reshow=True)
+    # extractor.select_fragment(reshow=True)
+    # extractor.select_roi(time_frame='3:24', reshow=True)
+    # extractor.select_threshold(time_frame='3:24', reshow=True)
     subtitles = extractor.extract(resize=0.5)
     extractor.save(subtitles, file_type='lrc')
 
