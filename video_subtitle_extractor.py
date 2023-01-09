@@ -17,6 +17,7 @@ subtitle_max_show_second = 10
 # 字幕相似度阈值(大于此阈值判定为相似)
 text_similar_threshold = 70
 
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 
 @contextmanager
 def capture_video(video_path: str) -> Callable:
@@ -288,7 +289,6 @@ class Video:
         """输入帧索引迭代器, 展示对应的每一帧画面"""
         assert wait > 0
         window_name = 'Show frame. press ESC to Cancel, S to Save'
-        cv2.namedWindow(window_name, flags=cv2.WINDOW_NORMAL)
         for idx, frame in frame_iterator:
             if frame_handler:
                 frame = frame_handler(frame, self)
@@ -312,7 +312,6 @@ class Video:
         window_name = 'Select a ROI. press SPACE or ENTER button to Confirm'
         frame = get_video_frame(self.path, frame_index)
         frame = FrameHandler.resize(frame, self, resize)
-        cv2.namedWindow(window_name, flags=cv2.WINDOW_NORMAL)
         roi = cv2.selectROI(window_name, frame, True, False)
         cv2.destroyAllWindows()
 
@@ -493,9 +492,11 @@ class SubtitleExtractor:
     def select_roi(self, time_frame: str = '-', resize: float = 0.5, reshow: bool = True) -> None:
         time_frame = time_frame if time_frame != '-' else self.time_start
         self.roi_array = self.video.select_roi(time_frame=time_frame, resize=resize, reshow=reshow)
+        logging.info(f'[roi array] {self.roi_array}')
 
     def select_fragment(self, resize: float = 0.5) -> None:
         self.time_start, self.time_end = self.video.select_fragment(resize=resize)
+        logging.info(f'[fragment] {self.time_start} -> {self.time_end}')
 
     def select_threshold(self, time_frame: str = '-', resize: float = 0.5) -> None:
         def before_handler(frame, video: Video):
@@ -504,6 +505,7 @@ class SubtitleExtractor:
             return frame
 
         self.threshold = self.video.select_threshold(time_frame=time_frame, before_frame_handler=before_handler)
+        logging.info(f'[threshold] {self.threshold}')
 
     def extract_by_func(self, *,
                         ocr_handler,
@@ -654,8 +656,8 @@ def cmd_run() -> None:
 def test():
     path = r'./CyberpunkEdgerunners01.mkv'
     extractor = SubtitleExtractor(video_path=path)
-    # extractor.select_fragment()
-    extractor.select_roi(time_frame='3:24', reshow=False)
+    extractor.select_fragment()
+    extractor.select_roi(time_frame='3:24', reshow=True)
     extractor.select_threshold(time_frame='3:24')
     subtitles = extractor.extract(resize=0.5)
     extractor.save(subtitles, file_type='lrc')
