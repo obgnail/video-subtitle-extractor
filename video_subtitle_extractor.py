@@ -29,6 +29,15 @@ def capture_video(video_path: str) -> Callable:
         vc.release()
 
 
+def get_video_frame(video_path: str, pos: int):
+    with capture_video(video_path) as vc:
+        vc.set(cv2.CAP_PROP_POS_FRAMES, pos)
+        ret, frame = vc.read()
+        if not ret or frame is None:
+            raise AttributeError(f'read frame error. POS:{pos}')
+    return frame
+
+
 # 接受一个帧索引迭代器,返回对应的每一帧画面
 def get_video_frames(video_path: str, frame_idx_iterator: Iterable = None) -> Iterable:
     if frame_idx_iterator and (not isinstance(frame_idx_iterator, Iterable)):
@@ -298,15 +307,9 @@ class Video:
         :return: tuple(矩形框中最小的x值, 矩形框中最小的y值, 矩形框的宽, 矩形框的高)
         """
         frame_index = 0 if time_frame == '-' else self.time_to_frame_idx(time_frame)
-        with capture_video(self.path) as video:
-            video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-            ret, frame = video.read()
-            if not ret or frame is None:
-                raise AttributeError(f'read frame error. start_time:{time_frame}')
-            x, y = frame.shape[0:2]
-            frame = cv2.resize(frame, (int(y * resize), int(x * resize)))
-            roi = cv2.selectROI('Select a ROI. press SPACE or ENTER button to Confirm', frame, True, False)
-
+        frame = get_video_frame(self.path, frame_index)
+        frame = FrameHandler.resize(frame, self, resize)
+        roi = cv2.selectROI('Select a ROI. press SPACE or ENTER button to Confirm', frame, True, False)
         cv2.destroyAllWindows()
 
         r = tuple(int(i // resize) for i in roi)
@@ -326,7 +329,7 @@ class Video:
         return r
 
     def select_fragment(self, resize: float = 0.5) -> List[str]:
-        window_name = 'select fragment. Enter Space to save'
+        window_name = 'Select Fragment. Press Space to confirm'
         tracker_name = 'Time'
 
         cv2.namedWindow(window_name, 1)
@@ -337,14 +340,12 @@ class Video:
             while True:
                 ret, frame = vc.read()
                 if not ret or frame is None:
-                    return
+                    raise AttributeError(f'read frame error. POS:{vc.get(0)}')
                 frame = FrameHandler.resize(frame, self, resize)
                 cv2.imshow(window_name, frame)
                 cv2.setTrackbarPos(tracker_name, window_name, int(vc.get(0) / 1000))
                 key = cv2.waitKey(int(self.fps))
-                if key in [ord('q'), 27]:
-                    break
-                elif key == 32:  # Space
+                if key == 32:  # Space
                     fragment.append(cv2.getTrackbarPos(tracker_name, window_name))
 
                 if len(fragment) == 2:
@@ -352,6 +353,29 @@ class Video:
         cv2.destroyAllWindows()
         res = [str(timedelta(seconds=i)) for i in sorted(fragment)]
         return res
+
+    def select_threshold(self, time_frame: str = '-', before_frame_handler: Callable = None,
+                         default_threshold=127) -> int:
+        frame_index = 0 if time_frame == '-' else self.time_to_frame_idx(time_frame)
+        window_name = 'Select Threshold. Press Space to confirm'
+        tracker_name = 'threshold'
+
+        frame = get_video_frame(self.path, frame_index)
+        if before_frame_handler:
+            frame = before_frame_handler(frame, self)
+
+        def set_threshold(pos):
+            new_frame = FrameHandler.threshold(frame, self, pos)
+            cv2.imshow(window_name, new_frame)
+
+        cv2.namedWindow(window_name)
+        cv2.createTrackbar(tracker_name, window_name, 0, 255, set_threshold)
+        cv2.setTrackbarPos(trackbarname=tracker_name, winname=window_name, pos=default_threshold)
+        cv2.imshow(window_name, frame)
+        if cv2.waitKey(0) == 32:
+            threshold = cv2.getTrackbarPos(tracker_name, window_name)
+            cv2.destroyAllWindows()
+            return threshold
 
     @staticmethod
     def _check_file_type(file_type: str) -> str:
@@ -367,7 +391,7 @@ class Video:
         basename = os.path.basename(self.path)
         file_name, file_ext = os.path.splitext(basename)
         file_path = f'{file_name}.{file_type}'
-        with open(file_path, "w") as file:
+        with open(file_path, "w", encoding='utf-8') as file:
             file.write(subtitles)
 
     def save_subtitle_by_formatter(self, formatters: List[SubtitleFormatter], file_type: str = 'lrc') -> None:
@@ -391,7 +415,13 @@ class FrameHandler:
 
     @classmethod
     def roi(cls, frame, video: Video, r: Tuple):
-        return frame[int(r[1]):int(r[1] + r[3]), int(r[0]):int(r[0] + r[2])]
+        return frame if not r else frame[int(r[1]):int(r[1] + r[3]), int(r[0]):int(r[0] + r[2])]
+
+    @classmethod
+    def threshold(cls, frame, video: Video, threshold: int = 127):
+        frame = cls.gray(frame, video)
+        _, frame = cv2.threshold(frame, threshold, 255, cv2.THRESH_BINARY)
+        return frame
 
 
 class SubtitleExtractor:
@@ -399,15 +429,17 @@ class SubtitleExtractor:
     frame_handler: Callable  # func(frame, video: Video) -> frame
     time_start: str = '-'
     time_end: str = '-'
+    threshold: int = -1
     roi_array: Tuple[int]
 
-    def __init__(self, video_path: str, *, time_start: str = "-", time_end: str = "-",
+    def __init__(self, video_path: str, *, time_start: str = "-", time_end: str = "-", threshold=-1,
                  roi_array: Tuple[int] = (), frame_handler: Callable = None):
-        self.video = Video(path=video_path)
+        self.video = Video(path=os.path.abspath(video_path))
         self.frame_handler = frame_handler
         self.roi_array = roi_array
         self.time_start = time_start
         self.time_end = time_end
+        self.threshold = threshold
         self.table = str.maketrans('|', 'I', '<>{}[];`@#$%^*_=~\\')
 
     def ocr(self, ocr_handler, frame, frame_idx) -> List[Subtitle]:
@@ -458,7 +490,15 @@ class SubtitleExtractor:
         self.roi_array = self.video.select_roi(time_frame=time_frame, resize=resize, reshow=reshow)
 
     def select_fragment(self, resize: float = 0.5) -> None:
-        self.time_start, self.time_end = self.video.select_fragment(resize)
+        self.time_start, self.time_end = self.video.select_fragment(resize=resize)
+
+    def select_threshold(self, time_frame: str = '-', resize: float = 0.5) -> None:
+        def before_handler(frame, video: Video):
+            frame = FrameHandler.roi(frame, video, self.roi_array)
+            frame = FrameHandler.resize(frame, video, resize)
+            return frame
+
+        self.threshold = self.video.select_threshold(time_frame=time_frame, before_frame_handler=before_handler)
 
     def extract_by_func(self, *,
                         ocr_handler,
@@ -491,8 +531,8 @@ class SubtitleExtractor:
             use_mp: bool = True,
             enable_mkldnn: bool = True,
             gpu_mem: int = 1024,
-            det_limit_side_len: int = 960,
-            rec_batch_num: int = 8,
+            det_limit_side_len: int = 1920,
+            rec_batch_num: int = 16,
             cpu_threads: int = 24,
             drop_score: float = 0.5,
             # video config
@@ -508,6 +548,8 @@ class SubtitleExtractor:
                 frame = FrameHandler.roi(frame, video, r)
             if gray:
                 frame = FrameHandler.gray(frame, video)
+            if self.threshold != -1:
+                frame = FrameHandler.threshold(frame, video, threshold=127)
             if resize != 1:
                 frame = FrameHandler.resize(frame, video, resize)
             return frame
@@ -538,19 +580,30 @@ def cmd_run() -> None:
     parser.add_argument('--path', type=str, help='video path')
 
     parser.add_argument('--ocr_lang', type=str, default='ch', help='ocr language')
-    parser.add_argument('--ocr_use_angle_cls', type=bool, default=True, help='ocr use angle cls')
-    parser.add_argument('--ocr_use_gpu', type=bool, default=True, help='ocr use gpu')
+    parser.add_argument('--ocr_use_angle_cls', type=bool, default=False, help='ocr use angle cls')
+    parser.add_argument('--ocr_use_gpu', type=bool, default=False, help='ocr use gpu')
+    parser.add_argument('--ocr_use_mp', type=bool, default=True, help='ocr use mp')
+    parser.add_argument('--ocr_enable_mkldnn', type=bool, default=True, help='ocr enable mkldnn')
+    parser.add_argument('--ocr_gpu_mem', type=int, default=1024, help='ocr gpu memory')
+    parser.add_argument('--ocr_det_limit_side_len', type=int, default=1920, help='ocr det limit side len')
+    parser.add_argument('--ocr_rec_batch_num', type=int, default=16, help='ocr rec batch num')
+    parser.add_argument('--ocr_cpu_threads', type=int, default=24, help='ocr cpu threads')
     parser.add_argument('--ocr_drop_score', type=float, default=0.5, help='ocr drop score')
 
-    parser.add_argument('--parse_start_time', type=str, default='-', help='parse start time. format: %H:%M:%S"')
-    parser.add_argument('--parse_end_time', type=str, default='-', help='parse end time. format: %H:%M:%S')
+    parser.add_argument('--parse_time_start', type=str, default='-', help='parse start time. format: %H:%M:%S"')
+    parser.add_argument('--parse_time_end', type=str, default='-', help='parse end time. format: %H:%M:%S')
     parser.add_argument('--parse_capture_interval', type=float, default=0.5, help='parse capture interval')
     parser.add_argument('--parse_gray', type=bool, default=False, help='parse gray frame')
     parser.add_argument('--parse_resize', type=float, default=1, help='parse resize frame')
 
-    parser.add_argument('--roi_start_time', type=str, help='select roi time. format: %H:%M:%S"')
+    parser.add_argument('--roi_time', type=str, help='select roi time. format: %H:%M:%S"')
     parser.add_argument('--roi_resize', type=float, default=0.5, help='select roi resize')
     parser.add_argument('--roi_reshow', type=bool, default=False, help='reshow roi selected frame')
+
+    parser.add_argument("--fragment_resize", type=float, default=0.5, help='select fragment resize')
+
+    parser.add_argument('--threshold_time', type=str, help='select threshold time. format: %H:%M:%S"')
+    parser.add_argument("--threshold_resize", type=float, default=0.5, help='select threshold resize')
 
     parser.add_argument('--output_format', type=str, default='lrc', help='subtitle file format')
 
@@ -558,18 +611,29 @@ def cmd_run() -> None:
 
     if not args.path:
         raise AttributeError("arg 'path' is null")
-    if not args.roi_start_time:
-        raise AttributeError("arg 'roi_start_time' is null")
+    if not args.roi_time:
+        raise AttributeError("arg 'roi_time' is null")
+
+    args.threshold_time = args.threshold_time if args.threshold_time else args.roi_time
 
     extractor = SubtitleExtractor(video_path=args.path)
-    extractor.select_roi(time_start=args.roi_start_time, resize=args.roi_resize, reshow=args.roi_reshow)
+    if args.parse_time_start == '-' and args.parse_time_end == '-':
+        extractor.select_fragment(resize=args.fragment_resize)
+    extractor.select_roi(time_frame=args.roi_time, resize=args.roi_resize, reshow=args.roi_reshow)
+    extractor.select_threshold(time_frame=args.threshold_time, resize=args.threshold_resize)
     subtitles = extractor.extract(
         lang=args.ocr_lang,
         use_angle_cls=args.ocr_use_angle_cls,
         use_gpu=args.ocr_use_gpu,
+        use_mp=args.ocr_use_mp,
+        enable_mkldnn=args.ocr_enable_mkldnn,
+        gpu_mem=args.ocr_gpu_mem,
+        det_limit_side_len=args.ocr_det_limit_side_len,
+        rec_batch_num=args.ocr_rec_batch_num,
+        cpu_threads=args.ocr_cpu_threads,
         drop_score=args.ocr_drop_score,
-        time_start=args.parse_start_time,
-        time_end=args.parse_end_time,
+        time_start=args.parse_time_start,
+        time_end=args.parse_time_end,
         capture_interval=args.parse_capture_interval,
         gray=args.parse_gray,
         resize=args.parse_resize,
@@ -577,10 +641,16 @@ def cmd_run() -> None:
     extractor.save(subtitles, file_type=args.output_format)
 
 
-if __name__ == '__main__':
-    path = r'd:\myshare\anime\Cyberpunk Edgerunners\[orion origin] Cyberpunk Edgerunners [01] [1080p] [H265 AAC] [CHS] [ENG＆JPN stidio].mkv'
+def test():
+    path = r'./CyberpunkEdgerunners01.mkv'
     extractor = SubtitleExtractor(video_path=path)
     extractor.select_fragment()
     extractor.select_roi(time_frame='3:24', reshow=False)
-    subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
+    extractor.select_threshold(time_frame='3:24')
+    subtitles = extractor.extract(resize=0.5)
     extractor.save(subtitles, file_type='lrc')
+
+
+if __name__ == '__main__':
+    test()
+    # cmd_run()
