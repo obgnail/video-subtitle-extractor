@@ -224,7 +224,7 @@ class Video:
         frame_end = self.frame_count - 1 if not time_end else self.time_to_frame_idx(time_end)
         if frame_end < frame_start:
             raise ValueError('time_start is later than time_end')
-        step = int(capture_interval * self.fps)
+        step = 1 if not capture_interval else int(capture_interval * self.fps)
         for frame_idx in range(frame_start, frame_end, step):
             yield frame_idx
 
@@ -248,17 +248,17 @@ class Video:
         return self.get_frames(range(frame_start, frame_end, frame_step))
 
     def show_by_time_range(self, frame_handler: Callable = None, time_start: str = '', time_end: str = '',
-                           capture_interval: float = 0.5, wait: int = -1) -> None:
+                           capture_interval: float = 0.5, window_name: str = '') -> None:
         """输入时间范围, 展示对应的每一帧画面"""
-        assert capture_interval > 0
+        assert capture_interval >= 0
         return self.show(
             frame_iterator=self.get_frames_by_time_range(time_start, time_end, capture_interval),
             frame_handler=frame_handler,
-            wait=wait
+            window_name=window_name
         )
 
     def show_by_frame_range(self, frame_handler: Callable = None, frame_start: int = -1, frame_end: int = -1,
-                            frame_interval: int = 1, wait: int = -1) -> None:
+                            frame_interval: int = 1, window_name: str = '') -> None:
         """输入帧索引范围, 展示对应的每一帧画面"""
         assert frame_interval > 0
         frame_start = frame_start if frame_start != -1 else 0
@@ -266,47 +266,38 @@ class Video:
         return self.show(
             frame_iterator=self.get_frames_by_frame_range(frame_start, frame_end, frame_interval),
             frame_handler=frame_handler,
-            wait=wait
+            window_name=window_name
         )
 
-    def show(self, frame_iterator: Iterable, frame_handler: Callable = None, wait: int = -1) -> None:
+    def show(self, frame_iterator: Iterable, frame_handler: Callable = None, window_name: str = 'Show Frame') -> None:
         """输入帧索引迭代器, 展示对应的每一帧画面"""
-        wait = self.fps if wait < 0 else wait
-        window_name = 'Show frame. press ESC/Q/Space to Cancel, S to Save'
+        window_name = f'[{window_name}] press ESC/Q/Space to Cancel, S to Save'
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_EXPANDED)
         for idx, frame in frame_iterator:
             if frame_handler:
                 frame = frame_handler(frame, self)
             cv2.imshow(window_name, frame)
-            key = cv2.waitKey(wait) & 0xFF
+            key = cv2.waitKey(self.fps) & 0xFF
             if key in [ord('q'), 27, 32]:  # esc、q、Space
                 break
             elif key == ord('s'):
-                cv2.imwrite(str(idx), frame)
+                cv2.imwrite(f'{idx}.jpg', frame)
         cv2.destroyAllWindows()
 
-    def select_roi(self, time_frame: str = '', reshow: bool = False) -> Tuple[int]:
+    def select_roi(self, time_frame: str = '', window_name: str = 'Select ROI') -> Tuple[int]:
         """以交互的方式剪切某一时刻的画面
         :return: tuple(矩形框中最小的x值, 矩形框中最小的y值, 矩形框的宽, 矩形框的高)
         """
+        window_name = f'[{window_name}] press SPACE/ENTER to Confirm'
         frame_index = 0 if not time_frame else self.time_to_frame_idx(time_frame)
-        window_name = 'Select a ROI. press SPACE or ENTER button to Confirm'
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_EXPANDED)
         frame = get_one_frame(self.path, frame_index)
         roi = cv2.selectROI(window_name, frame, True, False)
         cv2.destroyAllWindows()
-        if reshow:
-            self.show_by_frame_range(
-                frame_handler=lambda frame, video: FrameHandler.roi(frame, video, roi),
-                frame_start=frame_index,
-                frame_end=self.frame_count - 1,
-                frame_interval=self.fps,
-                wait=self.fps
-            )
         return roi
 
-    def select_fragment(self) -> List[str]:
-        window_name = 'Select Fragment. Press Space to confirm'
+    def select_fragment(self, window_name: str = 'Select Fragment') -> List[str]:
+        window_name = f'[{window_name}] press SPACE to Confirm'
         tracker_name = 'Time'
 
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_EXPANDED)
@@ -329,8 +320,9 @@ class Video:
         res = [str(timedelta(seconds=i)) for i in sorted(fragment)]
         return res
 
-    def select_threshold(self, time_frame: str = '', before_frame_handler: Callable = None, default_pos=127) -> int:
-        window_name = 'Select Threshold. Press Space to confirm'
+    def select_threshold(self, time_frame: str = '', before_frame_handler: Callable = None,
+                         default_pos=127, window_name: str = 'Select Threshold') -> int:
+        window_name = f'[{window_name}] Press Space to confirm'
         tracker_name = 'threshold'
         threshold = default_pos
 
@@ -434,6 +426,22 @@ class SubtitleExtractor:
             for res in ocr_result[0]
         ]
 
+    def _default_frame_handler(self, frame, video: Video):
+        if self.roi_array:
+            frame = FrameHandler.roi(frame, video, self.roi_array)
+        if self.threshold != -1:
+            frame = FrameHandler.threshold(frame, video)
+        return frame
+
+    def _show(self):
+        self.video.show_by_time_range(
+            frame_handler=self._default_frame_handler,
+            time_start=self.time_start,
+            time_end=self.time_end,
+            capture_interval=0,
+            window_name='reshow'
+        )
+
     def _to_formatter(self, subtitles: List[List[Subtitle]]) -> List[SubtitleFormatter]:
         if not subtitles:
             raise AttributeError('len(subtitles) == 0')
@@ -460,21 +468,27 @@ class SubtitleExtractor:
             ))
         return res
 
-    def select_roi(self, time_frame: str = '', reshow: bool = True) -> None:
-        time_frame = time_frame if not time_frame else self.time_start
-        self.roi_array = self.video.select_roi(time_frame=time_frame, reshow=reshow)
-        logging.info(f'[roi array] {self.roi_array}')
-
-    def select_fragment(self) -> None:
+    def select_fragment(self, reshow: bool = False) -> None:
         self.time_start, self.time_end = self.video.select_fragment()
         logging.info(f'[fragment] {self.time_start} -> {self.time_end}')
+        if reshow:
+            self._show()
 
-    def select_threshold(self, time_frame: str = '') -> None:
+    def select_roi(self, time_frame: str = '', reshow: bool = False) -> None:
+        time_frame = time_frame if not time_frame else self.time_start
+        self.roi_array = self.video.select_roi(time_frame=time_frame)
+        logging.info(f'[roi array] {self.roi_array}')
+        if reshow:
+            self._show()
+
+    def select_threshold(self, time_frame: str = '', reshow: bool = False) -> None:
         self.threshold = self.video.select_threshold(
             time_frame=time_frame,
             before_frame_handler=lambda frame, video: FrameHandler.roi(frame, video, self.roi_array)
         )
         logging.info(f'[threshold] {self.threshold}')
+        if reshow:
+            self._show()
 
     def extract_by_func(self, *,
                         ocr_handler,
@@ -579,7 +593,10 @@ def _parse_args():
     parser.add_argument('--roi_time', type=str, help='select roi time. format: %H:%M:%S"')
     parser.add_argument('--roi_reshow', type=bool, default=False, help='reshow roi selected frame')
 
+    parser.add_argument('--roi_fragment', type=bool, default=False, help='reshow fragment selected frame')
+
     parser.add_argument('--threshold_time', type=str, help='select threshold time. format: %H:%M:%S"')
+    parser.add_argument('--threshold_reshow', type=bool, default=True, help='reshow threshold selected frame')
 
     args = parser.parse_args()
 
@@ -600,7 +617,7 @@ def cmd_run() -> None:
     args = _parse_args()
     extractor = SubtitleExtractor(video_path=args.path)
     if not args.parse_time_start and not args.parse_time_end:
-        extractor.select_fragment()
+        extractor.select_fragment(reshow=args.roi_fragment)
     extractor.select_roi(time_frame=args.roi_time, reshow=args.roi_reshow)
     extractor.select_threshold(time_frame=args.threshold_time)
     subtitles = extractor.extract(
@@ -626,9 +643,9 @@ def cmd_run() -> None:
 def test():
     path = r'./CyberpunkEdgerunners01.mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_fragment()
+    extractor.select_fragment(reshow=True)
     extractor.select_roi(time_frame='3:24', reshow=True)
-    extractor.select_threshold(time_frame='3:24')
+    extractor.select_threshold(time_frame='3:24', reshow=True)
     subtitles = extractor.extract(resize=0.5)
     extractor.save(subtitles, file_type='lrc')
 
