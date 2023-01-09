@@ -282,27 +282,27 @@ class Video:
             if frame_handler:
                 frame = frame_handler(frame, self)
             cv2.imshow('Show frame. press ESC to Cancel, S to Save', frame)
-            key = cv2.waitKey(wait)
-            if key == 27:  # esc
+            key = cv2.waitKey(wait) & 0xFF
+            if key in [ord('q'), 27]:  # esc、q
                 break
             elif key == ord('s'):
                 cv2.imwrite(str(idx), frame)
         cv2.destroyAllWindows()
 
-    def select_roi(self, frame_time: str = '-', resize: float = 0.5, reshow: bool = False) -> Tuple[int]:
+    def select_roi(self, time_frame: str = '-', resize: float = 0.5, reshow: bool = False) -> Tuple[int]:
         """
         以交互的方式剪切某一时刻的画面
-        :param frame_time: 时间
+        :param time_frame: 时间
         :param resize: 如果完全展示2K、4K视频, 屏幕可能不够大, 提供缩放功能
         :param reshow: 剪切完毕后展示所选区域
         :return: tuple(矩形框中最小的x值, 矩形框中最小的y值, 矩形框的宽, 矩形框的高)
         """
-        frame_index = 0 if frame_time == '-' else self.time_to_frame_idx(frame_time)
+        frame_index = 0 if time_frame == '-' else self.time_to_frame_idx(time_frame)
         with capture_video(self.path) as video:
             video.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
             ret, frame = video.read()
             if not ret or frame is None:
-                raise AttributeError(f'read frame error. start_time:{frame_time}')
+                raise AttributeError(f'read frame error. start_time:{time_frame}')
             x, y = frame.shape[0:2]
             frame = cv2.resize(frame, (int(y * resize), int(x * resize)))
             roi = cv2.selectROI('Select a ROI. press SPACE or ENTER button to Confirm', frame, True, False)
@@ -321,9 +321,37 @@ class Video:
                 frame_start=frame_index,
                 frame_end=self.frame_count - 1,
                 frame_interval=self.fps,
-                wait=int(1000 / self.fps)
+                wait=self.fps
             )
         return r
+
+    def select_fragment(self, resize: float = 0.5) -> List[str]:
+        window_name = 'select fragment. Enter Space to save'
+        tracker_name = 'Time'
+
+        cv2.namedWindow(window_name, 1)
+        fragment: List[int] = []
+        with capture_video(self.path) as vc:
+            cv2.createTrackbar(tracker_name, window_name, 0, int(self.frame_count / self.fps),
+                               lambda pos: vc.set(0, pos * 1000))
+            while True:
+                ret, frame = vc.read()
+                if not ret or frame is None:
+                    return
+                frame = FrameHandler.resize(frame, self, resize)
+                cv2.imshow(window_name, frame)
+                cv2.setTrackbarPos(tracker_name, window_name, int(vc.get(0) / 1000))
+                key = cv2.waitKey(int(self.fps))
+                if key in [ord('q'), 27]:
+                    break
+                elif key == 32:  # Space
+                    fragment.append(cv2.getTrackbarPos(tracker_name, window_name))
+
+                if len(fragment) == 2:
+                    break
+        cv2.destroyAllWindows()
+        res = [str(timedelta(seconds=i)) for i in sorted(fragment)]
+        return res
 
     @staticmethod
     def _check_file_type(file_type: str) -> str:
@@ -369,12 +397,17 @@ class FrameHandler:
 class SubtitleExtractor:
     video: Video
     frame_handler: Callable  # func(frame, video: Video) -> frame
+    time_start: str = '-'
+    time_end: str = '-'
     roi_array: Tuple[int]
 
-    def __init__(self, video_path: str, *, roi_array: Tuple[int] = (), frame_handler: Callable = None):
+    def __init__(self, video_path: str, *, time_start: str = "-", time_end: str = "-",
+                 roi_array: Tuple[int] = (), frame_handler: Callable = None):
         self.video = Video(path=video_path)
         self.frame_handler = frame_handler
         self.roi_array = roi_array
+        self.time_start = time_start
+        self.time_end = time_end
         self.table = str.maketrans('|', 'I', '<>{}[];`@#$%^*_=~\\')
 
     def ocr(self, ocr_handler, frame, frame_idx) -> List[Subtitle]:
@@ -410,7 +443,8 @@ class SubtitleExtractor:
             first_sub = subtitles[frame_idx][0]
             alive = frame_idxes[frame_idx + 1] - frame_idxes[frame_idx]  # 下一个字幕开始帧减去当前字幕开始帧
             start_second = first_sub.frame_idx // self.video.fps
-            end_second = min(start_second + subtitle_max_show_second, (first_sub.frame_idx + alive) // self.video.fps)
+            end_second = min(start_second + subtitle_max_show_second,
+                             (first_sub.frame_idx + alive) // self.video.fps)
 
             res.append(SubtitleFormatter(
                 content=' '.join([sub.text for sub in subtitles[frame_idx]]),  # 将同一帧的字幕都合并起来
@@ -419,9 +453,12 @@ class SubtitleExtractor:
             ))
         return res
 
-    def select_roi(self, time_start: str = '-', resize: float = 0.5, reshow: bool = True) -> None:
-        roi = self.video.select_roi(frame_time=time_start, resize=resize, reshow=reshow)
-        self.roi_array = roi
+    def select_roi(self, time_frame: str = '-', resize: float = 0.5, reshow: bool = True) -> None:
+        time_frame = time_frame if time_frame != '-' else self.time_start
+        self.roi_array = self.video.select_roi(time_frame=time_frame, resize=resize, reshow=reshow)
+
+    def select_fragment(self, resize: float = 0.5) -> None:
+        self.time_start, self.time_end = self.video.select_fragment(resize)
 
     def extract_by_func(self, *,
                         ocr_handler,
@@ -432,6 +469,7 @@ class SubtitleExtractor:
                         ) -> List[List[Subtitle]]:
         subtitles = []
         func = frame_handler or self.frame_handler
+        # 非部署版本的paddleOCR不可同时识别多张图,是线程不安全的:https://aistudio.baidu.com/paddle/forum/topic/show/989282
         for idx, frame in tqdm(
                 iterable=self.video.get_frames_by_time_range(time_start, time_end, capture_interval),
                 total=self.video.count_frame(time_start, time_end, capture_interval),
@@ -448,8 +486,14 @@ class SubtitleExtractor:
             self, *,
             # ocr config
             lang: str = 'ch',
-            use_angle_cls: bool = True,
-            use_gpu: bool = True,
+            use_angle_cls: bool = False,
+            use_gpu: bool = False,
+            use_mp: bool = True,
+            enable_mkldnn: bool = True,
+            gpu_mem: int = 1024,
+            det_limit_side_len: int = 960,
+            rec_batch_num: int = 8,
+            cpu_threads: int = 24,
             drop_score: float = 0.5,
             # video config
             time_start: str = '-',
@@ -469,13 +513,16 @@ class SubtitleExtractor:
             return frame
 
         from paddleocr import PaddleOCR, paddleocr  # 因为PaddleOCR需要加载大量数据到内存中，延迟导入
-        ocr_handler = PaddleOCR(lang=lang, use_angle_cls=use_angle_cls, use_gpu=use_gpu, drop_score=drop_score)
+        ocr_handler = PaddleOCR(lang=lang, use_angle_cls=use_angle_cls, use_gpu=use_gpu, drop_score=drop_score,
+                                enable_mkldnn=enable_mkldnn, use_mp=use_mp, det_limit_side_len=det_limit_side_len,
+                                rec_batch_num=rec_batch_num, cpu_threads=cpu_threads, gpu_mem=gpu_mem)
         paddleocr.logging.disable(logging.DEBUG)
+        paddleocr.logging.disable(logging.WARNING)
         subtitles = self.extract_by_func(
             ocr_handler=ocr_handler,
             frame_handler=frame_handler,
-            time_start=time_start,
-            time_end=time_end,
+            time_start=time_start if time_start != '-' else self.time_start,
+            time_end=time_end if time_end != '-' else self.time_end,
             capture_interval=capture_interval
         )
         return subtitles
@@ -533,6 +580,7 @@ def cmd_run() -> None:
 if __name__ == '__main__':
     path = r'd:\myshare\anime\Cyberpunk Edgerunners\[orion origin] Cyberpunk Edgerunners [01] [1080p] [H265 AAC] [CHS] [ENG＆JPN stidio].mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_roi(time_start='3:24', resize=0.5, reshow=False)
+    extractor.select_fragment()
+    extractor.select_roi(time_frame='3:24', reshow=False)
     subtitles = extractor.extract(time_start='3:24', time_end='3:40', resize=1, gray=False)
     extractor.save(subtitles, file_type='lrc')
