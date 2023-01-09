@@ -206,7 +206,7 @@ class Video:
     height: int
     width: int
 
-    def __init__(self, path):
+    def __init__(self, path: str):
         self.path = path
         with capture_video(path) as v:
             self.frame_count = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -272,21 +272,22 @@ class Video:
     def show_by_frame_iterator(self, frame_iterator: Iterable, frame_handler: Callable = None,
                                window_name: str = 'Show Frame') -> None:
         """输入帧索引迭代器, 展示对应的每一帧画面"""
-        window_name = f'[{window_name}] press ESC/Q/Space to Cancel, S to Save'
+        window_name = f'[{window_name}] press ESC/SPACE/ENTER to Exit, S to Save'
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_EXPANDED)
         for idx, frame in frame_iterator:
             if frame_handler:
                 frame = frame_handler(frame, self)
             cv2.imshow(window_name, frame)
             key = cv2.waitKey(self.fps) & 0xFF
-            if key in [ord('q'), 27, 32]:  # esc、q、Space
+            if key in [27, 32, 13]:  # esc、Space、Enter
                 break
             elif key == ord('s'):
                 cv2.imwrite(f'{idx}.jpg', frame)
         cv2.destroyAllWindows()
 
-    def show(self, start_frame: int = 0, frame_handler: Callable = None, window_name: str = 'Show Frame') -> int:
-        window_name = f'[{window_name}] press ESC/Q/Space to Confirm, S to Save'
+    def show(self, start_frame: int = 0, frame_handler: Callable = None, window_name: str = 'Show Frame') -> timedelta:
+        """显示画面,并且在关闭时返回最后显示画面的时间"""
+        window_name = f'[{window_name}] press ESC/SPACE/ENTER to Exit, S to Save'
         tracker_name = 'Time'
 
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_EXPANDED)
@@ -305,13 +306,13 @@ class Video:
                 cv2.imshow(window_name, frame)
                 cv2.setTrackbarPos(tracker_name, window_name, int(vc.get(0) / 1000))
                 key = cv2.waitKey(self.fps) & 0xFF
-                if key in [ord('q'), 27, 32]:  # esc、q、Space
+                if key in [27, 32, 13]:  # esc、Space、Enter
                     pos = cv2.getTrackbarPos(tracker_name, window_name)
                     break
                 elif key == ord('s'):
                     cv2.imwrite(f'{idx}.jpg', frame)
         cv2.destroyAllWindows()
-        return pos
+        return timedelta(seconds=pos)
 
     def select_roi(self, time_frame: str = '', frame_handler: Callable = None,
                    window_name: str = 'Select ROI') -> Tuple[int]:
@@ -330,7 +331,7 @@ class Video:
 
     def select_threshold(self, time_frame: str = '', frame_handler: Callable = None,
                          default_pos=127, window_name: str = 'Select Threshold') -> int:
-        window_name = f'[{window_name}] Press Space to confirm'
+        window_name = f'[{window_name}] Press SPACE/ENTER to Confirm'
         tracker_name = 'threshold'
         threshold = default_pos
 
@@ -348,7 +349,7 @@ class Video:
         cv2.createTrackbar(tracker_name, window_name, 0, 255, set_threshold)
         cv2.setTrackbarPos(trackbarname=tracker_name, winname=window_name, pos=default_pos)
         cv2.imshow(window_name, frame)
-        if cv2.waitKey(0) == 32:
+        if cv2.waitKey(0) in [32, 13]:
             threshold = cv2.getTrackbarPos(tracker_name, window_name)
         cv2.destroyAllWindows()
         return threshold
@@ -482,10 +483,10 @@ class SubtitleExtractor:
         return res
 
     def select_fragment(self, reshow: bool = False) -> None:
-        times: List[int] = []
-        times.append(self.video.show(0, self._default_frame_handler, f'(1/2) Select StartTime'))
-        times.append(self.video.show(times[0] * self.video.fps, self._default_frame_handler, f'(2/2) Select EndTime'))
-        self.time_start, self.time_end = [str(timedelta(seconds=i)) for i in sorted(times)]
+        times: List[timedelta] = [self.video.show(0, self._default_frame_handler, '(1/2) Select StartTime')]
+        start = int(times[0].total_seconds() * self.video.fps)  # 第二次从前面结束的地方开始
+        times.append(self.video.show(start, self._default_frame_handler, '(2/2) Select EndTime'))
+        self.time_start, self.time_end = [str(i) for i in sorted(times)]
         logging.info(f'[fragment] {self.time_start} -> {self.time_end}')
         if reshow:
             self._show()
