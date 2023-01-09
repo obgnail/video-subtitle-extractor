@@ -287,10 +287,12 @@ class Video:
     def show(self, frame_iterator: Iterable, frame_handler: Callable = None, wait: int = 24) -> None:
         """输入帧索引迭代器, 展示对应的每一帧画面"""
         assert wait > 0
+        window_name = 'Show frame. press ESC to Cancel, S to Save'
+        cv2.namedWindow(window_name, flags=cv2.WINDOW_NORMAL)
         for idx, frame in frame_iterator:
             if frame_handler:
                 frame = frame_handler(frame, self)
-            cv2.imshow('Show frame. press ESC to Cancel, S to Save', frame)
+            cv2.imshow(window_name, frame)
             key = cv2.waitKey(wait) & 0xFF
             if key in [ord('q'), 27]:  # esc、q
                 break
@@ -307,9 +309,11 @@ class Video:
         :return: tuple(矩形框中最小的x值, 矩形框中最小的y值, 矩形框的宽, 矩形框的高)
         """
         frame_index = 0 if time_frame == '-' else self.time_to_frame_idx(time_frame)
+        window_name = 'Select a ROI. press SPACE or ENTER button to Confirm'
         frame = get_video_frame(self.path, frame_index)
         frame = FrameHandler.resize(frame, self, resize)
-        roi = cv2.selectROI('Select a ROI. press SPACE or ENTER button to Confirm', frame, True, False)
+        cv2.namedWindow(window_name, flags=cv2.WINDOW_NORMAL)
+        roi = cv2.selectROI(window_name, frame, True, False)
         cv2.destroyAllWindows()
 
         r = tuple(int(i // resize) for i in roi)
@@ -359,6 +363,7 @@ class Video:
         frame_index = 0 if time_frame == '-' else self.time_to_frame_idx(time_frame)
         window_name = 'Select Threshold. Press Space to confirm'
         tracker_name = 'threshold'
+        threshold = default_threshold
 
         frame = get_video_frame(self.path, frame_index)
         if before_frame_handler:
@@ -374,8 +379,8 @@ class Video:
         cv2.imshow(window_name, frame)
         if cv2.waitKey(0) == 32:
             threshold = cv2.getTrackbarPos(tracker_name, window_name)
-            cv2.destroyAllWindows()
-            return threshold
+        cv2.destroyAllWindows()
+        return threshold
 
     @staticmethod
     def _check_file_type(file_type: str) -> str:
@@ -578,6 +583,9 @@ def cmd_run() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--path', type=str, help='video path')
+    parser.add_argument('--subtitle_max_show_second', type=int, default=10, help='subtitle max show second')
+    parser.add_argument('--text_similar_threshold', type=int, default=70, help='text similar threshold')
+    parser.add_argument('--output_format', type=str, default='lrc', help='subtitle file format')
 
     parser.add_argument('--ocr_lang', type=str, default='ch', help='ocr language')
     parser.add_argument('--ocr_use_angle_cls', type=bool, default=False, help='ocr use angle cls')
@@ -605,8 +613,6 @@ def cmd_run() -> None:
     parser.add_argument('--threshold_time', type=str, help='select threshold time. format: %H:%M:%S"')
     parser.add_argument("--threshold_resize", type=float, default=0.5, help='select threshold resize')
 
-    parser.add_argument('--output_format', type=str, default='lrc', help='subtitle file format')
-
     args = parser.parse_args()
 
     if not args.path:
@@ -614,6 +620,10 @@ def cmd_run() -> None:
     if not args.roi_time:
         raise AttributeError("arg 'roi_time' is null")
 
+    global subtitle_max_show_second
+    global text_similar_threshold
+    subtitle_max_show_second = args.subtitle_max_show_second
+    text_similar_threshold = args.text_similar_threshold
     args.threshold_time = args.threshold_time if args.threshold_time else args.roi_time
 
     extractor = SubtitleExtractor(video_path=args.path)
@@ -644,7 +654,7 @@ def cmd_run() -> None:
 def test():
     path = r'./CyberpunkEdgerunners01.mkv'
     extractor = SubtitleExtractor(video_path=path)
-    extractor.select_fragment()
+    # extractor.select_fragment()
     extractor.select_roi(time_frame='3:24', reshow=False)
     extractor.select_threshold(time_frame='3:24')
     subtitles = extractor.extract(resize=0.5)
