@@ -11,7 +11,7 @@
 三者操作都可以使用 use_fragment，use_roi，use_threshold 配置进入交互页面设置。也可以通过 time_start、time_end、roi_array、threshold 等配置参数直接设置。
 
 ```bash
-python video_subtitle_extractor.py --path="./CyberpunkEdgerunners01.mkv" --use_fragment=True --use_threshold=True --use_roi=True --r oi_time="3:24"
+python video_subtitle_extractor.py --path="./CyberpunkEdgerunners01.mkv" --use_fragment=True --use_threshold=True --use_roi=True --roi_time="3:24"
 ```
 
 ```python
