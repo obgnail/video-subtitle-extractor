@@ -2,6 +2,33 @@
 
 ![video_subtitle_extractor](assets/video_subtitle_extractor.gif)
 
+## introduction
+
+提取视频硬字幕。采用 PaddleOCR。
+
+在解析前可以对视频进行`节选`(select_fragment)，`框选范围`(select_roi)，`阈值`(select_threshold) 操作，提高 OCR 效率。
+
+三者操作都可以使用 use_fragment，use_roi，use_threshold 配置进入交互页面设置。也可以通过 time_start、time_end、roi_array、threshold 等配置参数直接设置。
+
+```bash
+python video_subtitle_extractor.py --path="./CyberpunkEdgerunners01.mkv" --use_fragment=True --use_threshold=True --use_roi=True --r oi_time="3:24"
+```
+
+```python
+extractor = SubtitleExtractor(
+  video_path=r'./CyberpunkEdgerunners01.mkv'，
+  time_start='03:01',
+  time_end='23:44',
+  roi_array=(24, 789, 1896 191),
+  threshold=201,
+)
+# extractor.select_fragment()
+# extractor.select_roi()
+# extractor.select_threshold()
+subtitles = extractor.extract()
+extractor.save(subtitles)
+```
+
 ## config
 
 common：
@@ -19,7 +46,7 @@ parser：
 - parse_gray：解析视频时是否将视频切换为灰度图。默认 False。
 - parse_resize：解析视频时是否将视频进行缩放处理。默认为 1。
 
-option：
+prepare：
 
 - use_fragment：是否通过交互页面设置 parse_time_start 和 parse_time_end。默认为 False（如果 parse_time_start 和 parse_time_end 都没有设置，use_fragment 将设置为 True）
 - fragment_reshow：选取片段后，是否重新展示。
