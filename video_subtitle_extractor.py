@@ -678,5 +678,5 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
-    # cmd_run()
+    # test()
+    cmd_run()
