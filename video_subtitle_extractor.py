@@ -190,13 +190,25 @@ class SubtitleFormatter:
     start_time: timedelta
     end_time: timedelta
 
+    @staticmethod
+    def _time_formatter(t) -> str:
+        total_seconds = t.total_seconds()
+        minutes, remain = divmod(total_seconds, 60)
+        second = int(remain)
+        milliseconds = int((remain - second) * 100)
+        return '{:02d}:{:02d}.{:02d}'.format(int(minutes), second, milliseconds)
+
     @property
     def lrc(self) -> str:
-        return f'[{self.start_time}]{self.content}\n[{self.end_time}]'
+        start = self._time_formatter(self.start_time)
+        end = self._time_formatter(self.end_time)
+        return f'[{start}]{self.content}\n[{end}]'
 
     @property
     def txt(self) -> str:
-        return f'{self.start_time} --> {self.end_time}\n{self.content}\n\n'
+        start = self._time_formatter(self.start_time)
+        end = self._time_formatter(self.end_time)
+        return f'{start} --> {end}\n{self.content}\n\n'
 
 
 class Video:
@@ -472,9 +484,9 @@ class SubtitleExtractor:
 
             first_sub = subtitles[frame_idx][0]
             alive = frame_idxes[frame_idx + 1] - frame_idxes[frame_idx]  # 下一个字幕开始帧减去当前字幕开始帧
-            start_second = first_sub.frame_idx // self.video.fps
+            start_second = first_sub.frame_idx / self.video.fps
             end_second = min(start_second + subtitle_max_show_second,
-                             (first_sub.frame_idx + alive) // self.video.fps)
+                             (first_sub.frame_idx + alive) / self.video.fps)
             res.append(SubtitleFormatter(
                 content=' '.join([sub.text for sub in subtitles[frame_idx]]),  # 将同一帧的字幕都合并起来
                 start_time=timedelta(seconds=start_second),
@@ -628,8 +640,10 @@ def _parse_args():
         args.use_fragment = True
     if args.roi_time or args.roi_reshow:
         args.use_roi = True
-    if args.threshold_time or args.threshold_reshow:
-        args.use_threshold = True
+
+    if args.use_threshold:
+        if args.threshold_time or args.threshold_reshow:
+            args.use_threshold = True
 
     global subtitle_max_show_second
     global text_similar_threshold
@@ -677,6 +691,15 @@ def test():
     extractor.save(subtitles, file_type='lrc')
 
 
+def test2():
+    path = r'./track01.mp4'
+    extractor = SubtitleExtractor(video_path=path)
+    extractor.select_roi(time_frame='3:24', reshow=False)
+    subtitles = extractor.extract(lang='chinese_cht', resize=0.5, time_start='00:19:24')
+    extractor.save(subtitles, file_type='lrc')
+
+
 if __name__ == '__main__':
     # test()
-    cmd_run()
+    test2()
+    # cmd_run()
