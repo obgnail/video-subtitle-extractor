@@ -193,10 +193,11 @@ class SubtitleFormatter:
     @staticmethod
     def _time_formatter(t) -> str:
         total_seconds = t.total_seconds()
-        minutes, remain = divmod(total_seconds, 60)
-        second = int(remain)
-        milliseconds = int((remain - second) * 100)
-        return '{:02d}:{:02d}.{:02d}'.format(int(minutes), second, milliseconds)
+        minutes, seconds = divmod(total_seconds, 60)
+        _minutes = int(minutes)
+        _seconds = int(seconds)
+        _milliseconds = int((seconds - _seconds) * 100)
+        return '{:02d}:{:02d}.{:02d}'.format(_minutes, _seconds, _milliseconds)
 
     @property
     def lrc(self) -> str:
@@ -215,6 +216,7 @@ class Video:
     path: str
     frame_count: int
     fps: int
+    origin_fps: float  # 真正的帧率不一定是整数
     height: int
     width: int
 
@@ -222,7 +224,8 @@ class Video:
         self.path = path
         with capture_video(path) as v:
             self.frame_count = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
-            self.fps = round(v.get(cv2.CAP_PROP_FPS))
+            self.origin_fps = v.get(cv2.CAP_PROP_FPS)
+            self.fps = round(self.origin_fps)
             self.height = int(v.get(cv2.CAP_PROP_FRAME_HEIGHT))
             self.width = int(v.get(cv2.CAP_PROP_FRAME_WIDTH))
 
@@ -484,9 +487,9 @@ class SubtitleExtractor:
 
             first_sub = subtitles[frame_idx][0]
             alive = frame_idxes[frame_idx + 1] - frame_idxes[frame_idx]  # 下一个字幕开始帧减去当前字幕开始帧
-            start_second = first_sub.frame_idx / self.video.fps
+            start_second = first_sub.frame_idx / self.video.origin_fps
             end_second = min(start_second + subtitle_max_show_second,
-                             (first_sub.frame_idx + alive) / self.video.fps)
+                             (first_sub.frame_idx + alive) / self.video.origin_fps)
             res.append(SubtitleFormatter(
                 content=' '.join([sub.text for sub in subtitles[frame_idx]]),  # 将同一帧的字幕都合并起来
                 start_time=timedelta(seconds=start_second),
@@ -695,7 +698,7 @@ def test2():
     path = r'./track01.mp4'
     extractor = SubtitleExtractor(video_path=path)
     extractor.select_roi(time_frame='3:24', reshow=False)
-    subtitles = extractor.extract(lang='chinese_cht', resize=0.5, time_start='00:19:24')
+    subtitles = extractor.extract(lang='chinese_cht', resize=0.5, time_start='00:16:44')
     extractor.save(subtitles, file_type='lrc')
 
 
